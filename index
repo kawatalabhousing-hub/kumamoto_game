@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>防災脱出ゲーム：危険箇所を探せ</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'navy': '#001f44', // 濃紺
+                        'light-blue': '#e0f7fa', // 明るい水色
+                        'found-area': 'rgba(255, 255, 0, 0.4)', // 見つけた場所（黄色）
+                        'hint-area': 'rgba(255, 0, 0, 0.5)', // ヒント（点滅）エリア
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans JP', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* ゲーム全体の設定 */
+        body, html, #app {
+            height: 100%;
+            margin: 0;
+            overflow: hidden; /* スクロール防止 */
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+        }
+
+        /* カスタムアニメーション: 赤い点滅 */
+        @keyframes flash {
+            0%, 100% { opacity: 0.5; background-color: rgba(255, 0, 0, 0.5); }
+            50% { opacity: 1.0; background-color: rgba(255, 50, 50, 0.8); }
+        }
+
+        .flashing {
+            animation: flash 1s infinite;
+        }
+
+        /* 危険箇所エリアの基本スタイル */
+        .danger-area {
+            position: absolute;
+            cursor: pointer;
+            border-radius: 50%; /* 赤丸を再現するため円形に */
+            transition: background-color 0.2s;
+            z-index: 10; /* 画像より手前に配置 */
+        }
+        
+        .danger-area:hover:not(.found) {
+            outline: 2px solid rgba(255, 255, 255, 0.8);
+        }
+
+        /* メイン画像コンテナ */
+        #game-image-container {
+            position: relative;
+            width: 90%;
+            max-width: 900px;
+            margin: 0 auto;
+            aspect-ratio: 1 / 1; /* 画像のサイズに合わせて調整 */
+            overflow: hidden;
+        }
+
+        /* ステージ画像 */
+        .stage-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 画像を中央に表示し、コンテナに収める */
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        .stage-image.active {
+            opacity: 1;
+        }
+
+        /* モーダル */
+        #feedback-modal {
+            max-width: 600px;
+            z-index: 100;
+        }
+
+        /* アニメーション用のCSS */
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="app" class="flex flex-col items-center justify-center min-h-screen">
+
+        <!-- 1. タイトル画面 -->
+        <div id="start-screen" class="w-full h-full absolute inset-0 flex flex-col items-center justify-center bg-navy text-white transition-opacity duration-500 fade-in cursor-pointer" onclick="changeScreen('rules')">
+            <h1 class="text-6xl md:text-8xl font-black mb-4 tracking-widest text-yellow-300 shadow-lg" style="text-shadow: 4px 4px #000;">地震発生！</h1>
+            <h2 class="text-4xl md:text-6xl font-black tracking-widest text-yellow-300 shadow-lg" style="text-shadow: 4px 4px #000;">危険箇所を探せ！</h2>
+            <p class="mt-8 text-xl text-gray-300 animate-pulse">(画面をクリック)</p>
+        </div>
+
+        <!-- 2. ルール説明画面 -->
+        <div id="rules-screen" class="hidden w-full h-full absolute inset-0 flex-col items-center justify-center bg-light-blue text-gray-800 p-8 transition-opacity duration-500">
+            <div class="bg-white p-8 md:p-12 rounded-xl shadow-2xl max-w-3xl w-full fade-in">
+                <h2 class="text-4xl font-bold mb-6 text-center text-navy">ルール説明</h2>
+                
+                <div class="space-y-4">
+                    <section>
+                        <h3 class="text-2xl font-semibold text-red-600 border-b-2 border-red-200 pb-2 mb-3">【ゲーム概要】</h3>
+                        <ul class="list-disc list-inside space-y-1 text-lg">
+                            <li>制限時間：5分（300秒）以内に、3つのステージ（部屋）にある全10個の危険箇所を見つけ出しましょう。</li>
+                            <li>操作：画像内の危険箇所をクリックすると、ポイントが加算され、詳細が表示されます。</li>
+                            <li>ヒント：制限時間残り1分（60秒）になったら、未発見の危険箇所が赤く点滅し始めます。</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3 class="text-2xl font-semibold text-blue-600 border-b-2 border-blue-200 pb-2 mb-3">【スコア獲得方法】</h3>
+                        <ul class="list-disc list-inside space-y-1 text-lg">
+                            <li>危険箇所を発見： +10ポイント</li>
+                            <li>ボーナス：制限時間内に全10箇所を発見した場合、残り秒数×5ポイント加算！</li>
+                        </ul>
+                    </section>
+                </div>
+                
+                <p class="text-2xl font-bold text-center mt-6 text-green-700">たくさん見つけておうちの安全を守ろう！！</p>
+
+                <div class="flex justify-center mt-8">
+                    <button id="start-main-game-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-12 rounded-xl text-2xl transition duration-300 shadow-xl transform hover:scale-105">
+                        ゲームスタート
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. メインゲーム画面 (ステージ1, 2, 3) -->
+        <div id="main-game-screen" class="hidden w-full h-full absolute inset-0 flex-col items-center justify-start p-4 md:p-8 transition-opacity duration-500 bg-gray-200">
+            
+            <!-- ステータスバー -->
+            <div class="w-full max-w-3xl bg-white p-4 rounded-xl shadow-lg flex flex-wrap justify-between items-center mb-4 md:mb-6">
+                <div class="text-xl font-bold text-gray-700 mb-2 md:mb-0">
+                    <span id="stage-title" class="text-navy">ステージ1</span>
+                </div>
+                <div class="flex space-x-4">
+                    <div class="text-lg font-bold">
+                        時間: <span id="timer" class="text-red-600 text-2xl">5:00</span>
+                    </div>
+                    <div class="text-lg font-bold text-gray-700">
+                        スコア: <span id="score" class="text-blue-600 text-2xl">0</span>P
+                    </div>
+                    <div class="text-lg font-bold text-gray-700">
+                        発見数: <span id="found-count" class="text-green-600 text-2xl">0</span>/10
+                    </div>
+                </div>
+            </div>
+
+            <!-- ゲーム画像と危険箇所コンテナ -->
+            <div id="game-image-container" class="relative w-full max-w-3xl shadow-2xl overflow-hidden rounded-xl bg-white">
+                
+                <!-- ステージ画像コンポーネント (アップロードされた画像に変更) -->
+                <img id="stage-img-1" src="livingroom.jpg" data-stage="1" class="stage-image active" alt="部屋の画像 1 (キッチン)">
+                <img id="stage-img-2" src="https://placehold.co/900x900/e0e0e0/333?text=Stage+2:%0A%E5%AF%9D%E5%AE%A4" data-stage="2" class="stage-image" alt="部屋の画像 2 (寝室)">
+                <img id="stage-img-3" src="https://placehold.co/900x900/d0d0d0/333?text=Stage+3:%0A%E3%83%99%E3%83%A9%E3%83%B3%E3%83%80" data-stage="3" class="stage-image" alt="部屋の画像 3 (ベランダ)">
+
+
+                <!-- 危険箇所エリア (全10ヶ所) -->
+                <!-- 1. ステージ1 (キッチン/ダイニング) - 4箇所 -->
+                <div data-stage="1" data-area="1" class="danger-area" style="top: 20%; left: 33%; width: 10%; height: 10%;"></div>
+                <div data-stage="1" data-area="2" class="danger-area" style="top: 50%; left: 53%; width: 15%; height: 10%;"></div>
+                <div data-stage="1" data-area="3" class="danger-area" style="top: 75%; left: 20%; width: 10%; height: 10%;"></div>
+                <div data-stage="1" data-area="4" class="danger-area" style="top: 25%; left: 25%; width: 5%; height: 5%;"></div>
+                
+                <!-- 2. ステージ2 (寝室) - 4箇所 -->
+                <div data-stage="2" data-area="5" class="danger-area" style="top: 25%; left: 25%; width: 10%; height: 10%;"></div>
+                <div data-stage="2" data-area="6" class="danger-area" style="top: 60%; left: 37%; width: 5%; height: 5%;"></div>
+                <div data-stage="2" data-area="7" class="danger-area" style="top: 30%; left: 75%; width: 10%; height: 10%;"></div>
+                <div data-stage="2" data-area="8" class="danger-area" style="top: 55%; left: 80%; width: 5%; height: 5%;"></div>
+                
+                <!-- 3. ステージ3 (ベランダ) - 2箇所 -->
+                <div data-stage="3" data-area="9" class="danger-area" style="top: 55%; left: 25%; width: 20%; height: 20%;"></div>
+                <div data-stage="3" data-area="10" class="danger-area" style="top: 45%; left: 80%; width: 15%; height: 30%;"></div>
+                
+            </div>
+
+            <!-- ステージ切り替えボタン -->
+            <div class="flex justify-center mt-4 space-x-4">
+                <button onclick="changeStage(-1)" class="px-6 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg shadow-md transition disabled:opacity-50" id="prev-stage-button" disabled>
+                    &lt; 前のステージ
+                </button>
+                <button onclick="changeStage(1)" class="px-6 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg shadow-md transition" id="next-stage-button">
+                    次のステージ &gt;
+                </button>
+            </div>
+        </div>
+
+        <!-- 4. フィードバックモーダル -->
+        <div id="feedback-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
+            <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full fade-in">
+                <h3 id="feedback-title" class="text-3xl font-bold mb-4 text-center text-yellow-600">危険を発見！ (+10P)</h3>
+                <p class="text-lg font-semibold mb-2">【危険な理由】</p>
+                <p id="feedback-reason" class="mb-4 text-gray-700 border-l-4 border-red-500 pl-3 py-1 bg-red-50 rounded"></p>
+                <p class="text-lg font-semibold mb-2">【適切な対策】</p>
+                <p id="feedback-solution" class="mb-6 text-gray-700 border-l-4 border-green-500 pl-3 py-1 bg-green-50 rounded"></p>
+                
+                <div class="flex justify-center">
+                    <button id="close-modal-button" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-8 rounded-lg transition duration-300 shadow-md">
+                        閉じる
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. ゲームオーバー/クリア画面 -->
+        <div id="end-screen" class="hidden w-full h-full absolute inset-0 flex-col items-center justify-center transition-opacity duration-500 bg-navy text-white p-8">
+            <h2 id="end-message" class="text-6xl font-black mb-8 text-center text-yellow-400"></h2>
+            <p id="final-score-display" class="text-3xl mb-4 text-gray-200"></p>
+            <p id="time-bonus-display" class="text-2xl mb-12 text-gray-400"></p>
+            <button id="restart-button" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-xl text-2xl transition duration-300 shadow-xl transform hover:scale-105">
+                タイトルへ戻る
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // --- 1. 定数とグローバル変数 ---
+        const TIME_LIMIT = 300; // 5分 (秒)
+        const HINT_TIME = 60;   // 残り1分 (60秒) でヒント発動
+        const SCORE_PER_FIND = 10;
+        const BONUS_MULTIPLIER = 5;
+        const NUM_TOTAL_AREAS = 10;
+        
+        let gameState = {
+            currentScreen: 'start',
+            score: 0,
+            timeRemaining: TIME_LIMIT,
+            intervalId: null,
+            isModalOpen: false,
+            foundAreas: [],
+            currentStage: 1,
+            isHintActive: false,
+        };
+
+        // 危険箇所データ
+        const DANGER_DATA = [
+            // Stage 1
+            { stage: 1, area: 1, reason: "高い場所にある食器や重い物は、地震の揺れで落下し、割れたり怪我の原因になります。", solution: "食器棚の扉に開き防止ロックを取り付け、棚の上には物を置かないようにしましょう。" },
+            { stage: 1, area: 2, reason: "テーブルの上の割れ物（食器、花瓶）は、落下・飛散して足元を危険にし、避難を妨げます。", solution: "割れ物の下に滑り止めシートを敷くか、日常的にテーブル上に置く習慣を止めましょう。" },
+            { stage: 1, area: 3, reason: "コンロやレンジ周りの不安定な鍋は、揺れで飛び散ったり、ガス栓が外れて火災の原因になる危険性があります。", solution: "地震時はすぐに火元を止めること。普段から鍋類は確実に収納し、コンロ周りに燃えやすい物を置かないようにしましょう。" },
+            { stage: 1, area: 4, reason: "冷蔵庫などの大型家具の上の小物は、揺れで滑り落ち、頭や足元に当たる可能性があります。", solution: "家具の上には極力物を置かないようにし、やむを得ない場合は滑り止めマットで固定しましょう。" },
+            // Stage 2
+            { stage: 2, area: 5, reason: "押し入れ前などの通路に積まれた段ボールは、倒壊して避難経路を塞ぎ、外への脱出を不可能にします。", solution: "通路や出入り口付近に物を置かないことが最優先です。段ボールは崩れないように低く積み、または収納しましょう。" },
+            { stage: 2, area: 6, reason: "畳の上に直置きされた不安定な小物（ここでは本や箱を想定）は、夜間など足元が見えにくい時に怪我の原因になります。", solution: "床に直接物を置くのを避け、倒れにくい収納ケースにしまうか、固定しましょう。" },
+            { stage: 2, area: 7, reason: "就寝場所（布団/ベッド）の枕元にあるテレビは、転倒した場合、頭部に直撃し、命に関わる危険性があります。", solution: "テレビを寝室から移動させるか、転倒防止ベルトで壁に確実に固定し、寝る位置を危険箇所から遠ざけましょう。" },
+            { stage: 2, area: 8, reason: "家具の近くに置かれた不安定な小物やライトは、家具の転倒時に一緒に倒れ、割れたり、足元を塞いだりします。", solution: "落下や転倒の危険がある小物は、低い位置の安定した場所に移動させましょう。" },
+            // Stage 3
+            { stage: 3, area: 9, reason: "ベランダの避難経路（蹴破り戸や避難ハッチ周辺）に自転車やプランターがあると、緊急時の隣戸への避難を妨げます。", solution: "避難経路と指定された場所（蹴破り戸など）の周辺には、絶対に物を置かないようにしましょう。" },
+            { stage: 3, area: 10, reason: "窓ガラス付近にゴミ袋の山があると、ガラスが割れて飛散した際にゴミ袋がクッションにならず、避難経路を塞ぐ可能性があります。", solution: "ゴミ袋を窓から離れた場所に移動させ、窓ガラスには飛散防止フィルムを貼りましょう。" },
+        ];
+
+        // --- 2. DOM要素の取得 ---
+        const screens = {
+            start: document.getElementById('start-screen'),
+            rules: document.getElementById('rules-screen'),
+            mainGame: document.getElementById('main-game-screen'),
+            end: document.getElementById('end-screen'),
+        };
+        const elements = {
+            stageTitle: document.getElementById('stage-title'),
+            timer: document.getElementById('timer'),
+            score: document.getElementById('score'),
+            foundCount: document.getElementById('found-count'),
+            dangerAreas: document.querySelectorAll('.danger-area'),
+            stageImages: document.querySelectorAll('.stage-image'),
+            feedbackModal: document.getElementById('feedback-modal'),
+            feedbackReason: document.getElementById('feedback-reason'),
+            feedbackSolution: document.getElementById('feedback-solution'),
+            closeModalButton: document.getElementById('close-modal-button'),
+            endMessage: document.getElementById('end-message'),
+            finalScoreDisplay: document.getElementById('final-score-display'),
+            timeBonusDisplay: document.getElementById('time-bonus-display'),
+        };
+
+        // --- 3. 画面遷移制御 ---
+        function changeScreen(newScreen) {
+            Object.values(screens).forEach(screen => screen.classList.add('hidden'));
+            screens[newScreen].classList.remove('hidden');
+            screens[newScreen].classList.add('flex'); // `flex`を適用して表示
+            gameState.currentScreen = newScreen;
+
+            if (newScreen === 'mainGame') {
+                startGameTimer();
+            } else {
+                stopGameTimer();
+            }
+        }
+
+        // --- 4. ゲームの初期化と開始 ---
+        function initializeGame() {
+            gameState.score = 0;
+            gameState.timeRemaining = TIME_LIMIT;
+            gameState.foundAreas = new Array(NUM_TOTAL_AREAS).fill(false);
+            gameState.currentStage = 1;
+            gameState.isModalOpen = false;
+            gameState.isHintActive = false;
+            
+            updateGameUI();
+            
+            elements.dangerAreas.forEach((area, index) => {
+                area.classList.remove('found', 'flashing', 'bg-hint-area', 'bg-found-area');
+                area.onclick = () => findDangerArea(index);
+            });
+            
+            updateStageDisplay(gameState.currentStage);
+            changeScreen('start');
+        }
+
+        // --- 5. タイマー制御 ---
+        function startGameTimer() {
+            if (gameState.intervalId) clearInterval(gameState.intervalId);
+            
+            gameState.intervalId = setInterval(() => {
+                if (gameState.isModalOpen) return;
+
+                gameState.timeRemaining--;
+                updateGameUI();
+
+                if (gameState.timeRemaining <= 0) {
+                    gameOver(false);
+                    return;
+                }
+
+                if (gameState.timeRemaining <= HINT_TIME && !gameState.isHintActive) {
+                    gameState.isHintActive = true;
+                    applyHintStyles();
+                }
+            }, 1000);
+        }
+
+        function stopGameTimer() {
+            if (gameState.intervalId) {
+                clearInterval(gameState.intervalId);
+                gameState.intervalId = null;
+            }
+        }
+
+        // --- 6. UIの更新 ---
+        function updateGameUI() {
+            const minutes = Math.floor(gameState.timeRemaining / 60);
+            const seconds = gameState.timeRemaining % 60;
+            elements.timer.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            elements.score.textContent = gameState.score;
+            elements.foundCount.textContent = gameState.foundAreas.filter(Boolean).length;
+            
+            document.getElementById('prev-stage-button').disabled = gameState.currentStage === 1;
+            document.getElementById('next-stage-button').disabled = gameState.currentStage === 3;
+        }
+        
+        // --- 7. ステージ表示の切り替え ---
+        function updateStageDisplay(stage) {
+            gameState.currentStage = stage;
+            elements.stageTitle.textContent = `ステージ${stage}`;
+            
+            elements.stageImages.forEach(img => {
+                img.classList.toggle('active', parseInt(img.dataset.stage) === stage);
+            });
+
+            elements.dangerAreas.forEach((area) => {
+                const areaStage = parseInt(area.dataset.stage);
+                area.classList.toggle('hidden', areaStage !== stage);
+            });
+
+            if (gameState.isHintActive) {
+                applyHintStyles();
+            }
+            updateGameUI();
+        }
+
+        function changeStage(direction) {
+            const newStage = gameState.currentStage + direction;
+            if (newStage >= 1 && newStage <= 3) {
+                updateStageDisplay(newStage);
+            }
+        }
+
+        // --- 8. 危険箇所発見処理 ---
+        function findDangerArea(areaIndex) {
+            if (gameState.foundAreas[areaIndex]) return;
+
+            const data = DANGER_DATA[areaIndex];
+            if (!data) return;
+            
+            const areaElement = elements.dangerAreas[areaIndex];
+            if (!areaElement) return;
+
+            gameState.score += SCORE_PER_FIND;
+            gameState.foundAreas[areaIndex] = true;
+            gameState.isModalOpen = true;
+            
+            areaElement.classList.add('found', 'bg-found-area');
+            areaElement.classList.remove('flashing', 'bg-hint-area');
+            updateGameUI();
+
+            elements.feedbackReason.textContent = data.reason;
+            elements.feedbackSolution.textContent = data.solution;
+            elements.feedbackModal.classList.remove('hidden');
+
+            if (gameState.foundAreas.every(Boolean)) {
+                setTimeout(() => {
+                    elements.feedbackModal.classList.add('hidden');
+                    gameOver(true);
+                }, 2000);
+            }
+        }
+
+        // --- 9. ヒント表示処理 ---
+        function applyHintStyles() {
+            elements.dangerAreas.forEach((area, index) => {
+                const areaStage = parseInt(area.dataset.stage);
+                const isFound = gameState.foundAreas[index];
+                
+                if (areaStage === gameState.currentStage && !isFound) {
+                    area.classList.add('flashing');
+                } else {
+                    area.classList.remove('flashing');
+                }
+            });
+        }
+
+        // --- 10. ゲーム終了処理 ---
+        function gameOver(isClear) {
+            stopGameTimer();
+            changeScreen('end');
+            
+            let finalScore = gameState.score;
+            elements.timeBonusDisplay.textContent = '';
+            
+            if (isClear) {
+                const bonusScore = gameState.timeRemaining > 0 ? gameState.timeRemaining * BONUS_MULTIPLIER : 0;
+                finalScore += bonusScore;
+                elements.endMessage.textContent = '脱出成功！クリア！';
+                elements.endMessage.classList.remove('text-red-500');
+                elements.endMessage.classList.add('text-yellow-400');
+                if (bonusScore > 0) {
+                    elements.timeBonusDisplay.innerHTML = `（時間ボーナス: ${gameState.timeRemaining}秒 × 5P = ${bonusScore}P）`;
+                }
+            } else {
+                elements.endMessage.textContent = '時間切れ... ゲームオーバー';
+                elements.endMessage.classList.remove('text-yellow-400');
+                elements.endMessage.classList.add('text-red-500');
+                elements.timeBonusDisplay.textContent = `制限時間内に全10箇所を見つけられませんでした。`;
+            }
+            elements.finalScoreDisplay.innerHTML = `最終スコア: <span class="text-white font-bold">${finalScore}</span>P`;
+        }
+
+        // --- 11. イベントリスナー ---
+        document.getElementById('start-main-game-button').addEventListener('click', () => changeScreen('mainGame'));
+        elements.closeModalButton.addEventListener('click', () => {
+            elements.feedbackModal.classList.add('hidden');
+            gameState.isModalOpen = false;
+        });
+        document.getElementById('restart-button').addEventListener('click', initializeGame);
+
+        // --- 12. 初期実行 ---
+        window.onload = initializeGame;
+    </script>
+</body>
+</html>
+
+
+
